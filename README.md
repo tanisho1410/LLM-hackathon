@@ -1,47 +1,67 @@
-# Longevity Society Simulation – LLM Hackathon
+# 長寿社会シミュレーション – LLMハッカソン
 
-This project contains a baseline configuration and high‑level design for running a simple agent‑based simulation using large language models (LLMs).  The goal of the simulation is to explore how human behaviour might change in a future where the average lifespan extends to around **200 years**, youthfulness is maintained into old age, and reproductive capability spans well beyond the current human norm.
+このプロジェクトは、平均寿命が約 **200 年** に伸び、外見が若いまま生き続ける世界で、人々の行動がどのように変化するかをシンプルなエージェントベースのシミュレーションで探るものです。長寿社会では、再教育やキャリアチェンジ、家族形成などのライフイベントが従来とは異なるタイミングで発生すると考えられます。本リポジトリには、そのような未来社会を軽量に再現するための Python スクリプトと設定ファイルが含まれています。大型言語モデル（LLM）による推論は使用しておらず、一般的なゲーミング PC（30 万円前後の構成）でも十分に動作します。
 
-The simulation is derived from the bar–fire example in the original LLM‑Hackathon starter code.  Agents move on a two‑dimensional grid, communicate with nearby agents via LLM‑generated messages, make decisions about where to go next and how to react to events, and remember past observations.  In this version, the **places** and **events** have been redefined to represent schools, workplaces, family areas, policy debates and other social institutions relevant to a longevity‑oriented society.
-
-## Project structure
+## プロジェクト構成
 
 ```
 LLM-hackathon-project/
-├── README.md             # You are here
-├── config.yaml           # YAML configuration file for the simulation
-└── (placeholder files)   # You can add simulation code (e.g. agent.py, simulation.py) here
+├── README.md           # 本ファイル
+├── config.yaml         # シミュレーション設定（YAML）
+├── agent.py            # エージェントのクラス定義
+├── simulation.py       # シミュレーションの本体
+├── main.py             # 実行用エントリーポイント
+└── requirements.txt    # 必要な Python パッケージ
 ```
 
-Only the configuration and design document are provided here.  The actual simulation engine (such as `simulation.py` and `agent.py`) should be taken from the original hackathon repository or implemented independently.  The config file below can be used with the existing simulation code to run the longevity scenario.
+### 各ファイルの役割
 
-## Longevity scenario
+* `config.yaml` – 世界のサイズや場所の座標、エージェント数、シミュレーション時間などを定義します。数値を調整することで計算負荷を増減させることができます。
+* `agent.py` – エージェントの属性（年齢や志向など）をランダムに生成し、どの場所へ向かうかを決める簡単なアルゴリズムを実装しています。LLM は用いず、指向に基づくヒューリスティックで移動先を決定します。
+* `simulation.py` – YAML 設定を読み込み、エージェントと場所を作成し、時間ステップごとにエージェントを動かします。滞在回数などの簡易統計を集計して標準出力に表示します。
+* `main.py` – コマンドライン引数を処理し、`Simulation` クラスを起動するための薄いラッパーです。
+* `requirements.txt` – `pyyaml` だけを依存関係として使用しています。追加の巨大なライブラリは不要です。
 
-The core assumptions of this scenario are:
+## 長寿シナリオの前提
 
-* **Lifespan**: Humans live up to ~200 years on average.  They remain physically youthful (appearing around 30 years old) until roughly 180 years of age.
-* **Reproductive window**: People can reproduce from their late teens through roughly 150 years of age.
-* **Retirement**: There is no compulsory retirement age; people may work, learn and change careers at any time.
-* **Long‑term planning**: Agents may prioritise long‑term goals over short‑term gains because their time horizons are much longer.
-* **Events**: Instead of fires, “events” represent social or policy changes—e.g. pension reforms, debates about population control, or sudden increases in the cost of rejuvenation treatments.
+本シミュレーションでは、次のような前提を置いています。
 
-Agents are given additional attributes such as age, wealth, family orientation, risk tolerance and desire for children.  They decide where to go—academic institutions, family zones, startup laboratories, rejuvenation clinics, governance centres or investment hubs—based on their attributes, current events and interactions with others.
+* **平均寿命と外見**: 人間の平均寿命は 200 年程度で、180 歳頃まで 30 代のような外見を維持します。
+* **生殖可能期間**: 18 歳から約 150 歳まで子どもをもうけることができます。
+* **定年なし**: 定年制がなく、どの年齢でも働き続けたり、学び直したり、起業に挑戦することができます。
+* **社会イベント**: 従来の「火災」の代わりに、年金改革や出生制限議論、若返り治療の価格上昇などの政策イベントが起こります。簡易版ではイベントの影響は実装していませんが、設定ファイルに含めて将来拡張できるようにしています。
+* **エージェントの属性**: 各エージェントには年齢や志向（家族志向、キャリア志向、学習志向、長期志向、リスク許容度など）が割り当てられています。これらの志向は 0.0〜1.0 の範囲でランダムに決まり、どの場所を優先するかを決める要因になります。
 
-## Running the simulation
+## 実行方法
 
-1. Clone this repository together with the original hackathon code.
-2. Make sure you have Python 3.10+ and required dependencies installed (e.g. `openai`, `numpy`, `scipy`, etc.).
-3. Replace or extend the existing `config.yaml` with the one provided here.
-4. Run the simulation script (e.g. `python simulation.py --config config.yaml`).  The script will read the configuration, initialise agents and places, and run the simulation for the specified duration.  Output data (agent trajectories, messages and memory states) will be saved to the `output_longevity` directory.
+シミュレーションを実行するには、以下の手順を参考にしてください。
 
-You are encouraged to modify the configuration, add new places or events, and experiment with different parameters to observe emergent behaviours.  Feel free to extend the agent model to include more nuanced decision logic, add new KPIs (e.g. marriage age, number of children, career changes) and analyse how they evolve over time.
+1. Python 3.9 以上がインストールされていることを確認します。
+2. リポジトリのルートに移動し、依存関係をインストールします。
 
-## Next steps
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-To fully realise this scenario, you may want to:
+3. 設定ファイル（`config.yaml`）を必要に応じて編集します。初期設定では、30 名のエージェントが 100 ステップの間、7 つの場所を移動します。計算負荷を下げたい場合は、エージェント数やステップ数を減らしてください。
+4. シミュレーションを起動します。
 
-* **Integrate the society settings into your agent code** so that agents are aware of their age, wealth and other attributes when making decisions.
-* **Define KPI trackers** in the simulation to measure outcomes such as marriage age, number of children, career changes, education events and wealth distribution.
-* **Visualise the results** using charts or animations to compare longevity societies against baseline (modern) societies.
+   ```bash
+   python main.py --config config.yaml
+   ```
 
-Contributions and extensions are welcome!  Fork this repository and experiment with different societal assumptions or agent behaviours, and see what emergent phenomena arise.
+   オプションで `--seed` を指定すると、ランダムシードを固定して同じ結果を再現できます。
+
+5. 実行が終了すると、標準出力に各場所への訪問回数や経過時間が表示されます。ログファイルは `simulation.log` として保存されます。
+
+## ゲーミング PC での動作
+
+このシミュレーションは、LLM などの重い計算を行わないため、一般的なゲーミング PC でも問題なく実行できます。例えば、8 コア以上の CPU と 16 GB 以上のメモリを搭載した 30 万円前後の PC であれば、数百ステップ・数十エージェント規模のシミュレーションを数秒〜数十秒で完了できます。設定値を小さくすればさらに短時間で終わります。
+
+## 自由にカスタマイズ
+
+* `config.yaml` の `places` セクションに新しい場所を追加したり、座標や収容人数を変更することができます。
+* `fires` セクションに社会イベントを定義し、将来的にエージェントの行動に影響を与えるロジックを追加することもできます。
+* `agent.py` のロジックを発展させて、志向や年齢に応じたより複雑な意思決定やコミュニケーションを実装することも可能です。
+
+このリポジトリは自由にフォークして実験できます。長寿社会で起こりうる様々な行動や制度変化をシミュレーションし、自分なりの KPI（初婚年齢、子ども数、転職回数、再教育回数など）を計測してみてください。

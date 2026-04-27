@@ -1,6 +1,7 @@
 simulation:
   # total number of time steps to run
-  duration: 120
+  # シミュレーションのステップ数。短くすると計算負荷が下がります
+  duration: 100
   # defines the 2D grid in which agents move; coordinates range from
   # -half_space_size to +half_space_size on both axes
   half_space_size: 30
@@ -9,7 +10,8 @@ simulation:
 
 agents:
   # number of agents in the simulation
-  num_agents: 40
+  # ゲーミングPCでも動作するようにエージェント数を抑えます
+  num_agents: 30
   # how far agents can communicate (Euclidean distance) when outside of a place
   communication_radius: 6
   # maximum length of memory (number of messages) an agent retains
