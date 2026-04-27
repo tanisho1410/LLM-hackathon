@@ -1,0 +1,158 @@
+simulation:
+  # total number of time steps to run
+  duration: 120
+  # defines the 2D grid in which agents move; coordinates range from
+  # -half_space_size to +half_space_size on both axes
+  half_space_size: 30
+  # half size of each place; places are square regions centred at (center_x, center_y)
+  half_place_size: 4
+
+agents:
+  # number of agents in the simulation
+  num_agents: 40
+  # how far agents can communicate (Euclidean distance) when outside of a place
+  communication_radius: 6
+  # maximum length of memory (number of messages) an agent retains
+  memory_limit: 30
+  # number of memory items passed to the LLM context
+  memory_size: 8
+  # maximum number of past messages to include when an agent sends a new message
+  message_history_limit: 15
+  # number of messages from the agent’s history to include in the LLM context
+  message_context_size: 5
+
+places:
+  # Each place is defined by its name, type, centre coordinates and capacity.  The type
+  # field is only used for labelling and can be set arbitrarily.
+  - name: "academy"
+    type: "library"
+    center_x: -20
+    center_y: 12
+    half_size: 4
+    capacity: 12
+
+  - name: "workplace"
+    type: "office"
+    center_x: -5
+    center_y: 12
+    half_size: 4
+    capacity: 14
+
+  - name: "startup_lab"
+    type: "cafe"
+    center_x: 12
+    center_y: 14
+    half_size: 4
+    capacity: 10
+
+  - name: "family_zone"
+    type: "park"
+    center_x: -18
+    center_y: -10
+    half_size: 5
+    capacity: 14
+
+  - name: "rejuvenation_clinic"
+    type: "hospital"
+    center_x: 0
+    center_y: -14
+    half_size: 4
+    capacity: 10
+
+  - name: "governance_center"
+    type: "government"
+    center_x: 18
+    center_y: -8
+    half_size: 4
+    capacity: 12
+
+  - name: "investment_hub"
+    type: "market"
+    center_x: 20
+    center_y: 10
+    half_size: 4
+    capacity: 10
+
+llm:
+  # model name understood by your local LLM server (e.g. Ollama).  Adjust as needed.
+  model: "gpt-oss:20b"
+  base_url: "http://localhost:11434"
+  temperature: 0.3
+  max_tokens: 2048
+  repeat_penalty: 1.1
+  repeat_last_n: 128
+  min_p: 0.05
+
+fires:
+  # The original code uses “fires” to represent events.  In this scenario, events
+  # represent policy changes or shocks rather than literal fires.  Only agents
+  # within `radius` of the event’s centre will detect it immediately.
+  - name: "pension_reform"
+    start_step: 30
+    intensity: 0.7
+    radius: 20
+    center_x: 18
+    center_y: -8
+
+  - name: "fertility_regulation_debate"
+    start_step: 60
+    intensity: 0.8
+    radius: 18
+    center_x: -18
+    center_y: -10
+
+  - name: "rejuvenation_cost_spike"
+    start_step: 90
+    intensity: 0.9
+    radius: 15
+    center_x: 0
+    center_y: -14
+
+# Additional longevity‑specific settings.  These blocks will not be used by the
+# original simulation code unless you extend it to read them.  They are
+# included here for completeness and for future development.
+
+society:
+  # average lifespan in years
+  average_lifespan: 200
+  # number of healthy years before significant decline
+  healthspan: 180
+  # fixed appearance age (how old people look)
+  appearance_age_fixed: 30
+  # reproductive window (years)
+  fertility_age_min: 18
+  fertility_age_max: 150
+  # retirement age (null means no compulsory retirement)
+  retirement_age: null
+  # whether a pension system exists (may be under reform)
+  pension_enabled: true
+  # access model for anti‑aging treatments: universal, limited or elite
+  anti_aging_access: "universal"
+
+agent_profiles:
+  # initial age range of agents
+  age_min: 20
+  age_max: 180
+  # discrete wealth levels
+  wealth_levels: ["low", "middle", "high"]
+  # discrete income levels
+  income_levels: ["low", "middle", "high"]
+  # orientation ranges (0.0–1.0) determining behavioural tendencies
+  family_orientation_range: [0.0, 1.0]
+  career_orientation_range: [0.0, 1.0]
+  learning_orientation_range: [0.0, 1.0]
+  long_term_orientation_range: [0.0, 1.0]
+  fertility_desire_range: [0.0, 1.0]
+  risk_tolerance_range: [0.0, 1.0]
+
+visualization:
+  # save PNG frames of the simulation
+  save_frames: true
+  # how many steps between each saved frame
+  frame_interval: 1
+  # output directory for images and logs
+  output_dir: "output_longevity"
+
+logging:
+  level: "INFO"
+  log_file: "simulation_longevity.log"
