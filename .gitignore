@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.Python
+output_longevity/
+*.log
+*.ppm
+simulation.mp4

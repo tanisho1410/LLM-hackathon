@@ -76,6 +76,12 @@ places:
     capacity: 10
 
 llm:
+  # 既定は false。Ollama 未起動でも重くならないようにする
+  enabled: false
+  # LLM 応答エラーが続いたらヒューリスティックへ自動フォールバック
+  failure_limit: 5
+  # Ollama HTTP タイムアウト（秒）
+  timeout: 8
   # model name understood by your local LLM server (e.g. Ollama).  Adjust as needed.
   model: "gpt-oss:20b"
   base_url: "http://localhost:11434"
@@ -148,12 +154,16 @@ agent_profiles:
   risk_tolerance_range: [0.0, 1.0]
 
 visualization:
-  # save PNG frames of the simulation
+  # save PPM frames of the simulation (for ffmpeg or offline viewing)
   save_frames: true
   # how many steps between each saved frame
   frame_interval: 1
   # output directory for images and logs
   output_dir: "output_longevity"
+  # PPM bird's-eye view: pixels per grid cell
+  cell_pixels: 8
+  # MP4 encoding framerate when ffmpeg is available
+  fps: 10
 
 logging:
   level: "INFO"

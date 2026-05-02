@@ -7,19 +7,29 @@ Each agent has a unique identifier, a position on the 2D grid, an age and a set
 of orientations that influence which place they prefer to visit.  The agent's
 decision logic is simple and designed to run efficiently on consumer hardware.
 
-Agents do not call large language models.  Instead, they use heuristics based
-on their internal orientation scores to choose a target destination.  When an
-agent is inside a place, they remain there for a random dwell time before
-exiting.  Outside of places, they move towards their preferred destination or
-wander randomly.
+By default, agents use heuristics based on orientation scores.  Optionally,
+when ``llm.enabled`` is true in the YAML configuration, one agent per step may
+query a local Ollama-compatible server for the next target place; malformed JSON
+responses fall back to heuristics and consecutive failures disable LLM via
+``Simulation.register_llm_failure``.
 """
 
 from __future__ import annotations
 
+import json
+import logging
 import math
 import random
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+import re
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
+
+if TYPE_CHECKING:
+    from simulation import Simulation
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -38,15 +48,35 @@ class Place:
         )
 
 
+def extract_json_object(text: str) -> Optional[dict]:
+    """Parse JSON from model output; tolerate prose around or broken fences."""
+    raw = text.strip()
+    for candidate in (raw, raw.replace("```json", "").replace("```", "")):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end > start:
+        snippet = raw[start : end + 1]
+        try:
+            return json.loads(snippet)
+        except json.JSONDecodeError:
+            pass
+    m = re.search(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", raw, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
 class Agent:
     """
     An agent that moves on a 2D grid and chooses destinations based on
-    orientation scores.
-
-    :param agent_id: Unique integer identifier for the agent.
-    :param config: Parsed YAML configuration dictionary.
-    :param places: Mapping from place names to ``Place`` objects.
-    :param rng: A random.Random instance for reproducibility.
+    orientation scores, optionally assisted by a local LLM.
     """
 
     def __init__(self, agent_id: int, config: dict, places: Dict[str, Place], rng: random.Random):
@@ -55,12 +85,10 @@ class Agent:
         self.places = places
         self.rng = rng
 
-        # Sample the agent's initial attributes
         age_min = config.get("agent_profiles", {}).get("age_min", 20)
         age_max = config.get("agent_profiles", {}).get("age_max", 180)
         self.age: int = rng.randint(age_min, age_max)
 
-        # Orientation scores between 0.0 and 1.0
         self.family_orientation = rng.uniform(0.0, 1.0)
         self.career_orientation = rng.uniform(0.0, 1.0)
         self.learning_orientation = rng.uniform(0.0, 1.0)
@@ -68,16 +96,13 @@ class Agent:
         self.fertility_desire = rng.uniform(0.0, 1.0)
         self.risk_tolerance = rng.uniform(0.0, 1.0)
 
-        # Current position on the grid
         half_space = config["simulation"]["half_space_size"]
         self.x = rng.randint(-half_space, half_space)
         self.y = rng.randint(-half_space, half_space)
 
-        # State for dwell time if inside a place
         self.current_place: Optional[str] = None
         self.dwell_remaining: int = 0
 
-        # Count visits to each place
         self.visit_counts: Dict[str, int] = {name: 0 for name in places.keys()}
 
     def _distance(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> float:
@@ -85,56 +110,131 @@ class Agent:
         x2, y2 = pos2
         return math.hypot(x1 - x2, y1 - y2)
 
-    def step(self, simulation: "Simulation") -> None:
+    def step(self, simulation: "Simulation", step: int) -> None:
         """Advance the agent by one time step, updating its position and state."""
-        # If currently inside a place, decrement dwell time and leave when done
         if self.current_place:
             if self.dwell_remaining > 0:
                 self.dwell_remaining -= 1
                 return
-            else:
-                # Leave the place: simply mark as no longer inside
-                self.current_place = None
-                # random step outside after leaving
-                self._random_move(simulation)
-                return
+            self.current_place = None
+            self._random_move(simulation)
+            return
 
-        # Check if agent has entered any place at current position
         for name, place in self.places.items():
             if place.contains(self.x, self.y):
-                # Enter the place
                 self.current_place = name
                 self.visit_counts[name] += 1
-                # Choose a random dwell time between 3 and 8 steps
+                simulation.record_visit(step, self.id, name)
                 self.dwell_remaining = self.rng.randint(3, 8)
                 return
 
-        # Otherwise, decide where to go
-        self._move_towards_preferred_place()
+        if self._try_llm_move(simulation, step):
+            return
 
-    def _random_move(self, simulation: "Simulation") -> None:
-        """Move randomly one unit in any cardinal direction or stay in place."""
+        self._move_towards_preferred_place(simulation)
+
+    def _ollama_target_place(self) -> Optional[str]:
+        """Ask Ollama for a place name; return None on any failure."""
+        llm = self.config.get("llm", {})
+        base = llm.get("base_url", "http://localhost:11434").rstrip("/")
+        model = llm.get("model", "llama3")
+        timeout = float(llm.get("timeout", 8.0))
+        place_names = ", ".join(sorted(self.places.keys()))
+        system = (
+            "You help a grid-based simulation. Reply with a single JSON object only, "
+            'no other text, shape: {"target_place": "<one of the place names>"}.'
+        )
+        user = (
+            f"Agent id {self.id} at ({self.x},{self.y}), age {self.age}. "
+            f"Orientations: family={self.family_orientation:.2f}, career={self.career_orientation:.2f}, "
+            f"learning={self.learning_orientation:.2f}, long_term={self.long_term_orientation:.2f}, "
+            f"fertility={self.fertility_desire:.2f}, risk={self.risk_tolerance:.2f}.\n"
+            f"Valid place names: {place_names}."
+        )
+        body = json.dumps(
+            {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                "stream": False,
+                "format": "json",
+            }
+        ).encode("utf-8")
+        req = urllib.request.Request(
+            f"{base}/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as e:
+            logger.debug("Ollama request failed: %s", e)
+            return None
+        content = (payload.get("message") or {}).get("content")
+        if not content or not isinstance(content, str):
+            return None
+        data = extract_json_object(content)
+        if not data:
+            return None
+        name = data.get("target_place")
+        if not isinstance(name, str):
+            return None
+        name = name.strip()
+        if name in self.places:
+            return name
+        for k in self.places:
+            if k.lower() == name.lower():
+                return k
+        return None
+
+    def _try_llm_move(self, simulation: Simulation, step: int) -> bool:
+        if not simulation.llm_effective:
+            return False
+        n = len(simulation.agents) or 1
+        if step % n != self.id:
+            return False
+        target = self._ollama_target_place()
+        if target is None:
+            simulation.register_llm_failure()
+            return False
+        self._move_toward_place(simulation, self.places[target])
+        return True
+
+    def _random_move(self, simulation: Simulation) -> None:
         moves = [(0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)]
         dx, dy = self.rng.choice(moves)
         new_x = self.x + dx
         new_y = self.y + dy
-        # keep within bounds
         half_space = simulation.config["simulation"]["half_space_size"]
         self.x = max(-half_space, min(half_space, new_x))
         self.y = max(-half_space, min(half_space, new_y))
 
-    def _move_towards_preferred_place(self) -> None:
-        """
-        Move one step towards the most preferred place based on orientation scores.
-        This heuristic computes a simple score for each place based on the agent's
-        orientation and the distance to that place.  The agent then moves
-        one unit towards the highest scoring place.  If no place is strongly
-        preferred, the agent will wander randomly.
-        """
+    def _move_toward_place(self, simulation: Simulation, place: Place) -> None:
+        bx, by = place.center
+        dx = bx - self.x
+        dy = by - self.y
+        if dx == 0 and dy == 0:
+            return
+        if abs(dx) > abs(dy):
+            step_x = 1 if dx > 0 else -1
+            step_y = 0
+        else:
+            step_x = 0
+            step_y = 1 if dy > 0 else -1
+        self.x += step_x
+        self.y += step_y
+        half_space = self.config["simulation"]["half_space_size"]
+        self.x = max(-half_space, min(half_space, self.x))
+        self.y = max(-half_space, min(half_space, self.y))
+
+    def _move_towards_preferred_place(self, simulation: Simulation) -> None:
         best_score = -1.0
         best_place: Optional[Place] = None
 
-        # Assign weights to orientations per place
         for name, place in self.places.items():
             orient_score = 0.0
             if name == "family_zone":
@@ -145,16 +245,10 @@ class Agent:
                 orient_score = self.career_orientation
             elif name == "startup_lab":
                 orient_score = (self.career_orientation + self.risk_tolerance) / 2.0
-            elif name == "rejuvenation_clinic":
-                orient_score = self.long_term_orientation
-            elif name == "governance_center":
-                orient_score = self.long_term_orientation
-            elif name == "investment_hub":
+            elif name in ("rejuvenation_clinic", "governance_center", "investment_hub"):
                 orient_score = self.long_term_orientation
 
-            # compute distance to place center
             dist = self._distance((self.x, self.y), place.center)
-            # Avoid division by zero and penalise distant targets
             if dist == 0:
                 dist = 0.5
             score = orient_score / dist
@@ -162,27 +256,8 @@ class Agent:
                 best_score = score
                 best_place = place
 
-        # Threshold for decision: if the best score is very low, wander randomly
         if best_place is None or best_score < 0.05:
-            # wander randomly
             self._random_move(simulation)
             return
 
-        # Move one step towards the best place center
-        bx, by = best_place.center
-        dx = bx - self.x
-        dy = by - self.y
-        # normalise to one step
-        if abs(dx) > abs(dy):
-            step_x = 1 if dx > 0 else -1
-            step_y = 0
-        else:
-            step_x = 0
-            step_y = 1 if dy > 0 else -1
-        self.x += step_x
-        self.y += step_y
-
-        # ensure we stay within world bounds
-        half_space = self.config["simulation"]["half_space_size"]
-        self.x = max(-half_space, min(half_space, self.x))
-        self.y = max(-half_space, min(half_space, self.y))
+        self._move_toward_place(simulation, best_place)

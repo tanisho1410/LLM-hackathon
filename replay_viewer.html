@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Longevity simulation replay</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 16px; background: #0f1115; color: #e8eaef; }
+    canvas { display: block; background: #141824; border-radius: 8px; max-width: 100%; height: auto; }
+    .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+    button, input[type="range"] { accent-color: #6ea8fe; }
+    .muted { color: #9aa3b2; font-size: 0.9rem; }
+    a { color: #8ab4ff; }
+  </style>
+</head>
+<body>
+  <h1>シミュレーションリプレイ</h1>
+  <p class="muted">
+    同じフォルダの <code>replay.json</code> を読み込みます。ブラウザの制限で開けない場合は、このディレクトリで
+    <code>python -m http.server 8765</code> を実行し、<a href="#" id="help-link">http://localhost:8765/replay_viewer.html</a> を開いてください。
+  </p>
+  <div class="bar">
+    <button id="play">再生</button>
+    <button id="pause">一時停止</button>
+    <label>ステップ <span id="stepLabel">0</span> / <span id="totalLabel">0</span></label>
+    <input type="range" id="scrub" min="0" max="0" value="0" style="flex:1; min-width:180px" />
+  </div>
+  <canvas id="c" width="900" height="900"></canvas>
+  <p id="status" class="muted"></p>
+  <script>
+    const canvas = document.getElementById('c');
+    const ctx = canvas.getContext('2d');
+    const scrub = document.getElementById('scrub');
+    const stepLabel = document.getElementById('stepLabel');
+    const totalLabel = document.getElementById('totalLabel');
+    const status = document.getElementById('status');
+    let data = null;
+    let timer = null;
+    let playing = false;
+
+    const PALETTE = [
+      '#dc5a5a', '#58c878', '#64a0ff', '#f0c850', '#c878dc', '#50dcc8', '#ff8c50', '#b4b4ff'
+    ];
+
+    function drawFrame(frame) {
+      if (!data) return;
+      const hs = data.meta.half_space;
+      const grid = 2 * hs + 1;
+      const cell = Math.floor(Math.min(canvas.width, canvas.height) / grid);
+      const ox = Math.floor((canvas.width - grid * cell) / 2);
+      const oy = Math.floor((canvas.height - grid * cell) / 2);
+
+      ctx.fillStyle = '#141824';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      for (const p of data.places) {
+        ctx.fillStyle = 'rgba(80, 96, 140, 0.35)';
+        const x0 = p.center_x - p.half_size;
+        const y0 = p.center_y - p.half_size;
+        for (let x = x0; x <= p.center_x + p.half_size; x++) {
+          for (let y = y0; y <= p.center_y + p.half_size; y++) {
+            const gx = x + hs;
+            const gy = y + hs;
+            if (gx >= 0 && gx < grid && gy >= 0 && gy < grid) {
+              const sx = ox + gx * cell;
+              const sy = oy + (grid - 1 - gy) * cell;
+              ctx.fillRect(sx, sy, cell, cell);
+            }
+          }
+        }
+      }
+
+      for (const a of frame.agents) {
+        const gx = a.x + hs;
+        const gy = a.y + hs;
+        if (gx < 0 || gx >= grid || gy < 0 || gy >= grid) continue;
+        const sx = ox + gx * cell;
+        const sy = oy + (grid - 1 - gy) * cell;
+        ctx.fillStyle = PALETTE[a.id % PALETTE.length];
+        ctx.fillRect(sx + 1, sy + 1, Math.max(1, cell - 2), Math.max(1, cell - 2));
+      }
+    }
+
+    function setStep(i) {
+      if (!data || !data.frames.length) return;
+      const max = data.frames.length - 1;
+      const idx = Math.max(0, Math.min(max, i));
+      scrub.value = String(idx);
+      stepLabel.textContent = String(data.frames[idx].step);
+      drawFrame(data.frames[idx]);
+    }
+
+    function tick() {
+      if (!data || !playing) return;
+      let idx = parseInt(scrub.value, 10) + 1;
+      if (idx >= data.frames.length) {
+        playing = false;
+        return;
+      }
+      setStep(idx);
+      timer = requestAnimationFrame(tick);
+    }
+
+    document.getElementById('play').onclick = () => {
+      if (!data) return;
+      playing = true;
+      cancelAnimationFrame(timer);
+      timer = requestAnimationFrame(tick);
+    };
+    document.getElementById('pause').onclick = () => {
+      playing = false;
+      cancelAnimationFrame(timer);
+    };
+    scrub.oninput = () => {
+      playing = false;
+      cancelAnimationFrame(timer);
+      setStep(parseInt(scrub.value, 10));
+    };
+
+    fetch('replay.json')
+      .then((r) => {
+        if (!r.ok) throw new Error(r.statusText);
+        return r.json();
+      })
+      .then((json) => {
+        data = json;
+        totalLabel.textContent = String(json.frames.length ? json.frames[json.frames.length - 1].step : 0);
+        scrub.max = String(Math.max(0, json.frames.length - 1));
+        scrub.value = '0';
+        stepLabel.textContent = '0';
+        setStep(0);
+        status.textContent = 'replay.json を読み込みました。';
+      })
+      .catch((e) => {
+        status.textContent = 'replay.json を読み込めませんでした: ' + e.message;
+      });
+  </script>
+</body>
+</html>
